@@ -1,0 +1,184 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPLv3
+
+""" print all the words of length letters in probabalistic order """
+
+# pylint: disable=deprecated-module
+# pylint: disable=invalid-name
+# pylint: disable=too-many-branches
+# pylint: disable=too-many-locals
+# pylint: disable=too-many-statements
+
+import re
+
+from optparse import OptionParser
+
+class Word:
+    """ Our word class """
+
+    def __init__(self, word, probs):
+        self.probs = probs
+        self.word = word
+
+    @property
+    def score(self):
+        """ score a word against our probability table """
+
+        # currently this just uses probability of a letter appearing in a
+        # N-tuple word at all, and then we add a trivial amount to very common
+        # endings.
+        #
+        # A better way would be to make the probability table positional.
+
+        score = 0
+        for letter in self.word:
+            self.probs.setdefault(letter, 0)
+            score += self.probs[letter]
+        skews = {
+            'D': 1, # because verbs
+            'S': 2, # because verbs and plurals
+        }
+        for k,v in skews.items():
+            if self.word[-1] in k:
+                score += v
+        return score
+
+    def __cmp__(self, other):
+        """ compare two words given the probability table """
+
+        scorea = self.score
+        scoreb = other.score
+
+        if scorea > scoreb:
+            return 1
+        if scorea < scoreb:
+            return -1
+        return 0
+
+    def __lt__(self, other):
+        """ compare two words given the probability table """
+
+        scorea = self.score
+        scoreb = other.score
+
+        return scorea < scoreb
+
+    def __str__(self):
+        return self.word
+
+    def __repr__(self):
+        return self.word
+
+def parse_command_line():
+    """ parse the command line """
+    usage = "usage: %prog [-b BADEXP] [-g GOODEXP] [-p present] [-a absent] [-d|-D] [-l LENGTH]"
+    parser = OptionParser(usage=usage)
+    parser.add_option("-b", "--bad", help="Bad expression", action="append",
+                      dest="badexps", default=[], metavar="REGEX")
+    parser.add_option("-g", "--good", help="Good expression", action="append",
+                      dest="goodexps", default=[], metavar="REGEX")
+    parser.add_option("-p", "--present", help="present characters",
+                      action="append", dest="present", default=[])
+    parser.add_option("-a", "--absent", help="absent characters",
+                      action="append", dest="absent", default=[])
+    parser.add_option("-l", "--length", help="Word length", action="store",
+                      dest="length", default=5)
+    parser.add_option("-d", "--allow-duplicates", help="allow duplicate letters",
+                      action="store_true", dest="duplicates", default=None)
+    parser.add_option("-D", "--no-duplicates", help="don't allow duplicate letters",
+                      action="store_false", dest="duplicates")
+    parser.add_option("-s", "--show-score", help="show the word score",
+                      action="store_true", dest="show_score", default=False)
+
+    options, args = parser.parse_args()
+
+    return options, args
+
+def main():
+    """ our main loop """
+
+    options, args = parse_command_line()
+    if args:
+        raise ValueError
+
+    badexps = [re.compile(exp) for exp in options.badexps]
+    goodexps = [re.compile(exp) for exp in options.goodexps]
+
+    words = []
+    probs = {}
+
+    if options.duplicates is None:
+        if badexps or goodexps or options.present or options.absent:
+            options.duplicates = True
+        else:
+            options.duplicates = False
+
+    with open("sowpods.txt") as wordfile:
+        wordlist = wordfile.readlines()
+        for word in wordlist:
+            word = word.strip()
+
+            if len(word) != options.length:
+                continue
+
+            found = False
+            lettermap = {}
+            for letter in word:
+                probs.setdefault(letter, 0)
+                probs[letter] += 1
+                lettermap.setdefault(letter, 0)
+                lettermap[letter] += 1
+                if lettermap[letter] > 1:
+                    found = True
+
+            if found and not options.duplicates:
+                continue
+
+            found = False
+            for exp in badexps:
+                if exp.match(word) is not None:
+                    found = True
+                    break
+            if found:
+                continue
+
+            present = {}
+            for opt in options.present:
+                for letter in opt:
+                    present[letter] = 0
+            absent = {}
+            for opt in options.absent:
+                for letter in opt:
+                    absent[letter] = 0
+
+            found = False
+            for letter in word:
+                if letter in absent.keys():
+                    found = True
+                try:
+                    del present[letter]
+                except KeyError:
+                    pass
+            if len(present.keys()) != 0:
+                continue
+            if found:
+                continue
+
+            if goodexps:
+                for exp in goodexps:
+                    if exp.match(word):
+                        words.append(Word(word, probs))
+            else:
+                words.append(Word(word, probs))
+
+    #print("probs:%s" % (probs,))
+
+    words.sort()
+    for word in words:
+        if options.show_score:
+            print("%s %s" % (word,word.score))
+        else:
+            print("%s" % (word,))
+
+if __name__ == '__main__':
+    main()
