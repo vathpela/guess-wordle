@@ -5,6 +5,7 @@
 
 # pylint: disable=deprecated-module
 # pylint: disable=invalid-name
+# pylint: disable=no-self-use
 # pylint: disable=too-many-branches
 # pylint: disable=too-many-locals
 # pylint: disable=too-many-statements
@@ -13,6 +14,69 @@ import re
 
 from optparse import OptionParser
 
+class Probabilities:
+    """ a probability table """
+    def __init__(self):
+        self.probs = {}
+
+    def add(self, word):
+        """ add a word to the dictionary """
+        raise NotImplementedError
+
+    def score(self, word):
+        """ score a word against the table """
+        raise NotImplementedError
+
+class LetterProbabilities(Probabilities):
+    """ non-positional letter probabilities """
+    def __init__(self):
+        Probabilities.__init__(self)
+
+    def add(self, word):
+        for letter in word:
+            self.probs.setdefault(letter, 0)
+            self.probs[letter] += 1
+
+    def score(self, word):
+        score = 0
+        for letter in word:
+            self.probs.setdefault(letter, 0)
+            score += self.probs[letter]
+        skews = {
+            'D':1,  # because verbs
+            'S':2,  # because verbs and plurals
+        }
+        for k, v in skews.items():
+            if word[-1] == k:
+                score += v
+        return score
+
+class PositionalLetterProbabilities(Probabilities):
+    """ non-positional letter probabilities """
+    def __init__(self):
+        Probabilities.__init__(self)
+
+    def add(self, word):
+        for pos, letter in enumerate(word):
+            self.probs.setdefault(pos, {})
+            self.probs[pos].setdefault(letter, 0)
+            self.probs[pos][letter] += 1
+
+    def score(self, word):
+        score = 0
+        for pos, letter in enumerate(word):
+            self.probs.setdefault(pos, {})
+            self.probs[pos].setdefault(letter, 0)
+            score += self.probs[pos][letter]
+        skews = {
+            'D':1,  # because verbs
+            'S':2,  # because verbs and plurals
+        }
+        for k, v in skews.items():
+            if word[-1] == k:
+                score += v
+        return score
+
 class Word:
     """ Our word class """
 
@@ -20,28 +84,17 @@ class Word:
         self.probs = probs
         self.word = word
 
+    def _score(self, probs=None):
+        """ score a word against the probability table """
+        if probs is None:
+            probs = self.probs
+        return probs.score(self.word)
+
     @property
     def score(self):
         """ score a word against our probability table """
 
-        # currently this just uses probability of a letter appearing in a
-        # N-tuple word at all, and then we add a trivial amount to very common
-        # endings.
-        #
-        # A better way would be to make the probability table positional.
-
-        score = 0
-        for letter in self.word:
-            self.probs.setdefault(letter, 0)
-            score += self.probs[letter]
-        skews = {
-            'D': 1, # because verbs
-            'S': 2, # because verbs and plurals
-        }
-        for k,v in skews.items():
-            if self.word[-1] in k:
-                score += v
-        return score
+        return self._score()
 
     def __cmp__(self, other):
         """ compare two words given the probability table """
@@ -89,6 +142,8 @@ def parse_command_line():
                       action="store_false", dest="duplicates")
     parser.add_option("-s", "--show-score", help="show the word score",
                       action="store_true", dest="show_score", default=False)
+    parser.add_option("-P", "--positional", help="use positional probability table",
+                      action="store_true", dest="positional", default=False)
 
     options, args = parser.parse_args()
 
@@ -105,7 +160,10 @@ def main():
     goodexps = [re.compile(exp) for exp in options.goodexps]
 
     words = []
-    probs = {}
+    if options.positional:
+        probs = PositionalLetterProbabilities()
+    else:
+        probs = LetterProbabilities()
 
     if options.duplicates is None:
         if badexps or goodexps or options.present or options.absent:
@@ -121,11 +179,10 @@ def main():
             if len(word) != options.length:
                 continue
 
+            probs.add(word)
             found = False
             lettermap = {}
             for letter in word:
-                probs.setdefault(letter, 0)
-                probs[letter] += 1
                 lettermap.setdefault(letter, 0)
                 lettermap[letter] += 1
                 if lettermap[letter] > 1:
